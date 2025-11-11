@@ -1,0 +1,32 @@
+# 示例 providers.toml
+# 说明：
+# - bases.* 定义可复用的基类片段，可继续通过 extends 组成多层继承。
+# - providers.* 定义实际可选择的 provider，enable 控制是否可用。
+
+[bases.claude_code_common]
+brief = "Claude Code 通用配置"
+[bases.claude_code_common.env]
+CLAUDE_CODE_DISABLE_TERMINAL_TITLE = "1"
+
+
+[providers.claude_from_zulong]
+enable = true
+brief = "祖龙搭建的Claude Code代理"
+extends = ["claude_code_common"]
+[providers.claude_from_zulong.env]
+CLAUDE_CODE_USE_BEDROCK = "1"
+CLAUDE_CODE_SKIP_BEDROCK_AUTH = "1"
+ANTHROPIC_AUTH_TOKEN = "sk-uqiKf8cRu5fW_bvVG_fdPA"
+ANTHROPIC_BEDROCK_BASE_URL = "http://litellm-api.zulong.com:4000/bedrock"
+ANTHROPIC_DEFAULT_SONNET_MODEL = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+ANTHROPIC_DEFAULT_HAIKU_MODEL = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+
+[providers.qwen3_from_modelscope]
+enable = true
+brief = "ModelScope上的Qwen3"
+extends = ["claude_code_common"]
+[providers.qwen3_from_modelscope.env]
+ANTHROPIC_API_KEY = "ms-68595c65-39bf-4c9f-9052-98532bcf626d"
+ANTHROPIC_BASE_URL = "https://api-inference.modelscope.cn"
+ANTHROPIC_DEFAULT_SONNET_MODEL = "Qwen/Qwen3-Coder-480B-A35B-Instruct"
+ANTHROPIC_DEFAULT_HAIKU_MODEL = "Qwen/Qwen3-Coder-480B-A35B-Instruct"
