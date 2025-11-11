@@ -210,38 +210,52 @@ def resolve_envs(
     return resolved
 
 
+def _collect_providers(providers: Dict[str, Definition], only_enabled: bool = True) -> List[Definition]:
+    entries = [p for p in providers.values() if (p.enable or not only_enabled)]
+    entries.sort(key=lambda p: p.identifier)
+    return entries
+
+
+def _format_provider_table(entries: List[Definition]) -> List[str]:
+    if not entries:
+        return []
+    id_cells = [f"[{i}]" for i in range(1, len(entries) + 1)]
+    name_cells = [p.identifier for p in entries]
+    brief_cells = [p.brief or "" for p in entries]
+
+    id_width = max(len("ID"), *(len(cell) for cell in id_cells))
+    name_width = max(len("name"), *(len(cell) for cell in name_cells))
+
+    header = f"{'ID'.ljust(id_width)}  {'name'.ljust(name_width)}  brief"
+    lines: List[str] = [header, "-" * len(header)]
+    for id_cell, name_cell, brief_cell in zip(id_cells, name_cells, brief_cells):
+        lines.append(f"{id_cell.ljust(id_width)}  {name_cell.ljust(name_width)}  {brief_cell}")
+    return lines
+
+
 def print_provider_list(providers: Dict[str, Definition]) -> None:
-    enabled = [p for p in providers.values() if p.enable]
-    if not enabled:
+    entries = _collect_providers(providers, only_enabled=True)
+    if not entries:
         print("当前配置中没有 enable=true 的 provider。")
         return
-    print("可用的 provider：")
-    for provider in sorted(enabled, key=lambda p: p.identifier):
-        if provider.brief:
-            print(f"- {provider.identifier} : {provider.brief}")
-        else:
-            print(f"- {provider.identifier}")
+    for line in _format_provider_table(entries):
+        print(line)
 
 
 def select_provider_interactively(providers: Dict[str, Definition]) -> str:
-    enabled = [p for p in providers.values() if p.enable]
-    if not enabled:
+    entries = _collect_providers(providers, only_enabled=True)
+    if not entries:
         raise ConfigError("没有 enable=true 的 provider 可供选择，请检查配置。")
-    enabled.sort(key=lambda p: p.identifier)
-    print("请选择要使用的 provider：")
-    for idx, provider in enumerate(enabled, start=1):
-        label = provider.identifier
-        if provider.brief:
-            label = f"{label} - {provider.brief}"
-        print(f"[{idx}] {label}")
+    for line in _format_provider_table(entries):
+        print(line)
     while True:
         user_input = input("请输入编号或 provider id：").strip()
         if not user_input:
             continue
         if user_input.isdigit():
             index = int(user_input) - 1
-            if 0 <= index < len(enabled):
-                return enabled[index].identifier
+            if 0 <= index < len(entries):
+                return entries[index].identifier
         provider = providers.get(user_input)
         if provider:
             if not provider.enable:
@@ -334,6 +348,31 @@ def make_backup(path: Path) -> Optional[Path]:
     with path.open("rb") as src, backup_path.open("wb") as dst:
         dst.write(src.read())
     return backup_path
+
+
+def rotate_backups(path: Path, keep: int = 5) -> List[Path]:
+    """
+    仅保留最近 keep 个备份（按修改时间倒序），删除更旧的备份。
+    备份文件命名约定：<filename>.<timestamp>.bak
+    """
+    parent = path.parent
+    prefix = f"{path.name}."
+    suffix = ".bak"
+    if not parent.exists():
+        return []
+    candidates = [
+        p for p in parent.iterdir()
+        if p.is_file() and p.name.startswith(prefix) and p.name.endswith(suffix)
+    ]
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    removed: List[Path] = []
+    for old in candidates[keep:]:
+        try:
+            old.unlink()
+            removed.append(old)
+        except OSError:
+            pass
+    return removed
 
 
 def atomic_write_json(path: Path, data: Dict[str, object]) -> None:
@@ -459,6 +498,9 @@ def main() -> None:
         backup_path = make_backup(output_path)
         if backup_path:
             print(f"已创建备份：{backup_path}")
+            removed = rotate_backups(output_path, keep=5)
+            if removed:
+                print(f"已清理旧备份 {len(removed)} 个。")
 
     try:
         atomic_write_json(output_path, updated_settings)
