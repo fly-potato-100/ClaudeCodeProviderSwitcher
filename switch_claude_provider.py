@@ -308,15 +308,14 @@ def apply_provider_env(
     new_env: Dict[str, str],
     clean_strategy: str,
     resolved_envs: Dict[str, Dict[str, str]],
-) -> Tuple[Dict[str, object], Optional[str], List[str], List[str], List[str]]:
+) -> Tuple[Dict[str, object], Optional[str]]:
     env_section = settings.get("env")
     if isinstance(env_section, dict):
         current_env = {str(k): "" if v is None else str(v) for k, v in env_section.items()}
     else:
         current_env = {}
-    original_env = dict(current_env)
 
-    previous_provider = original_env.get(CLAUDE_PROVIDER_KEY)
+    previous_provider = current_env.get(CLAUDE_PROVIDER_KEY)
     if not isinstance(previous_provider, str):
         previous_provider = None
 
@@ -330,13 +329,7 @@ def apply_provider_env(
 
     settings["env"] = current_env
 
-    removed_keys = sorted(k for k in original_env.keys() if k not in current_env)
-    added_keys = sorted(k for k in current_env.keys() if k not in original_env)
-    changed_keys = sorted(
-        k for k in current_env.keys() if k in original_env and original_env[k] != current_env[k]
-    )
-
-    return settings, previous_provider, removed_keys, added_keys, changed_keys
+    return settings, previous_provider
 
 
 def make_backup(path: Path) -> Optional[Path]:
@@ -395,13 +388,111 @@ def atomic_write_json(path: Path, data: Dict[str, object]) -> None:
             os.remove(tmp_name)
 
 
+def mask_sensitive_value(var_name: str, value: str, max_len: int = 50) -> str:
+    """
+    对敏感环境变量值进行 mask 处理。
+    如果变量名包含敏感关键词（key, secret, token, password），则：
+    - 值长度 > 12：保留前后各 6 字符，中间用 *** 替代
+    - 值长度 ≤ 12：保留前后各 2 字符，中间用 *** 替代
+    最后截断到 max_len 长度。
+    """
+    sensitive_keywords = ("key", "secret", "token", "password")
+    var_name_lower = var_name.lower()
+    is_sensitive = any(keyword in var_name_lower for keyword in sensitive_keywords)
+    
+    if not is_sensitive:
+        masked = value
+    else:
+        val_len = len(value)
+        if val_len > 12:
+            # 保留前后各 6 字符
+            masked = f"{value[:6]}***{value[-6:]}"
+        elif val_len > 4:
+            # 保留前后各 2 字符
+            masked = f"{value[:2]}***{value[-2:]}"
+        else:
+            # 太短则全部 mask
+            masked = "***"
+    
+    # 截断处理
+    if len(masked) > max_len:
+        masked = masked[:47] + "..."
+    
+    return masked
+
+
+def format_env_comparison_table(
+    current_env: Dict[str, str], new_env: Dict[str, str], provider_id: str
+) -> List[str]:
+    """
+    生成环境变量对比表格。
+    左列为变量名，中列为 current 值，右列为 new 值。
+    """
+    # 合并所有变量名，保持 new_env 的顺序，额外的 current 变量按字母序追加
+    all_vars: List[str] = []
+    seen: Set[str] = set()
+    
+    # 先添加 new_env 中的变量（保持原顺序）
+    for var in new_env.keys():
+        if var not in seen:
+            all_vars.append(var)
+            seen.add(var)
+    
+    # 再添加 current_env 中额外的变量（字母序）
+    extra_vars = sorted(k for k in current_env.keys() if k not in seen)
+    all_vars.extend(extra_vars)
+    
+    if not all_vars:
+        return []
+    
+    # 准备表格数据
+    rows: List[Tuple[str, str, str]] = []
+    for var in all_vars:
+        current_val = current_env.get(var, "(not set)")
+        new_val = new_env.get(var, "(will be removed)")
+        
+        # 对实际存在的值进行 mask 处理
+        if current_val not in ("(not set)", "(will be removed)"):
+            current_val = mask_sensitive_value(var, current_val)
+        if new_val not in ("(not set)", "(will be removed)"):
+            new_val = mask_sensitive_value(var, new_val)
+        
+        rows.append((var, current_val, new_val))
+    
+    # 计算列宽
+    col1_width = max(len("Variable Name"), *(len(r[0]) for r in rows))
+    col2_width = max(len("Current Value"), *(len(r[1]) for r in rows))
+    col3_header = f"New Value (Provider: {provider_id})"
+    col3_width = max(len(col3_header), *(len(r[2]) for r in rows))
+    
+    # 生成表格
+    lines: List[str] = []
+    header = (
+        f"{'Variable Name'.ljust(col1_width)} | "
+        f"{'Current Value'.ljust(col2_width)} | "
+        f"{col3_header.ljust(col3_width)}"
+    )
+    lines.append(header)
+    separator = f"{'-' * col1_width}-+-{'-' * col2_width}-+-{'-' * col3_width}"
+    lines.append(separator)
+    
+    for var, cur_val, new_val in rows:
+        line = (
+            f"{var.ljust(col1_width)} | "
+            f"{cur_val.ljust(col2_width)} | "
+            f"{new_val.ljust(col3_width)}"
+        )
+        lines.append(line)
+    
+    return lines
+
+
 def summarize_changes(
     provider_id: str,
     clean_strategy: str,
     previous_provider: Optional[str],
-    removed_keys: Iterable[str],
-    added_keys: Iterable[str],
-    changed_keys: Iterable[str],
+    current_env: Dict[str, str],
+    new_env: Dict[str, str],
 ) -> None:
     print(f"将切换至 provider: {provider_id}")
     if previous_provider:
@@ -412,23 +503,15 @@ def summarize_changes(
     else:
         print("此前 provider: 未记录")
     print(f"清理策略: {clean_strategy}")
-
-    removed = list(removed_keys)
-    added = list(added_keys)
-    changed = [k for k in changed_keys if k not in added]
-
-    if removed:
-        print(f"将移除 env 键：{', '.join(removed)}")
+    print()
+    
+    # 生成并打印对比表格
+    table_lines = format_env_comparison_table(current_env, new_env, provider_id)
+    if table_lines:
+        for line in table_lines:
+            print(line)
     else:
-        print("无 env 键被移除。")
-    if added:
-        print(f"新增 env 键：{', '.join(added)}")
-    else:
-        print("无新增 env 键。")
-    if changed:
-        print(f"更新 env 键：{', '.join(changed)}")
-    else:
-        print("无需要更新的 env 键。")
+        print("无环境变量变更。")
 
 
 def main() -> None:
@@ -472,7 +555,14 @@ def main() -> None:
         print(f"配置错误：{exc}", file=sys.stderr)
         sys.exit(1)
 
-    updated_settings, previous_provider, removed_keys, added_keys, changed_keys = apply_provider_env(
+    # 提取当前的 env 用于展示对比
+    current_env_section = settings.get("env")
+    if isinstance(current_env_section, dict):
+        current_env_dict = {str(k): "" if v is None else str(v) for k, v in current_env_section.items()}
+    else:
+        current_env_dict = {}
+
+    updated_settings, previous_provider = apply_provider_env(
         settings=settings,
         provider_id=provider_id,
         new_env=new_env,
@@ -480,13 +570,19 @@ def main() -> None:
         resolved_envs=resolved_envs,
     )
 
+    # 提取新的 env 用于展示对比
+    new_env_section = updated_settings.get("env")
+    if isinstance(new_env_section, dict):
+        new_env_dict = {str(k): "" if v is None else str(v) for k, v in new_env_section.items()}
+    else:
+        new_env_dict = {}
+
     summarize_changes(
         provider_id=provider_id,
         clean_strategy=args.clean,
         previous_provider=previous_provider,
-        removed_keys=removed_keys,
-        added_keys=added_keys,
-        changed_keys=changed_keys,
+        current_env=current_env_dict,
+        new_env=new_env_dict,
     )
 
     if args.dry_run:
