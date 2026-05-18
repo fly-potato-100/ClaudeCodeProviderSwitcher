@@ -11,8 +11,14 @@
 - 智能备份轮转，自动清理历史备份文件。
 
 ## 环境要求
-- Python 3.11 及以上（依赖标准库 `tomllib`）。
+- Python 3.11 及以上；或 Python 3.9/3.10 + `tomli`。
 - 建议在项目根目录 `G:\scp` 下运行。
+
+如果您在 WSL 或旧环境中使用 Python 3.9/3.10，而又不想升级 Python 版本，可先安装轻量兼容库：
+
+```bash
+python3 -m pip install --user tomli
+```
 
 ## TOML 配置结构
 参考示例文件：`providers.toml.example`

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import importlib
 import json
 import os
 import sys
@@ -13,8 +14,14 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
-    print("需要 Python 3.11 或更新版本（内置 tomllib 模块）。", file=sys.stderr)
-    sys.exit(1)
+    try:
+        tomllib = importlib.import_module("tomli")
+    except ModuleNotFoundError:
+        print(
+            "需要 Python 3.11+（内置 tomllib），或在 Python 3.9/3.10 下先安装 tomli：python -m pip install tomli",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 CLAUDE_PROVIDER_KEY = "__CLAUDE_SWITCHER_PROVIDER"
