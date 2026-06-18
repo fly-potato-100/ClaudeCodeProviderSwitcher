@@ -218,9 +218,8 @@ def resolve_envs(
 
 
 def _collect_providers(providers: Dict[str, Definition], only_enabled: bool = True) -> List[Definition]:
-    entries = [p for p in providers.values() if (p.enable or not only_enabled)]
-    entries.sort(key=lambda p: p.identifier)
-    return entries
+    # 保持 TOML 配置文件中的书写顺序，不做额外排序
+    return [p for p in providers.values() if (p.enable or not only_enabled)]
 
 
 def _format_provider_table(entries: List[Definition]) -> List[str]:
